@@ -429,7 +429,11 @@ module.exports = function apiRoutes() {
     // ## Extended Authentication
     router.post('/authentication/complete', http(api.authentication.completeSignIn));
     router.post('/authentication/token/refresh', http(api.authentication.refreshToken));
-    router.get('/authentication/redirect', http(api.authentication.redirectToSection));
+    router.get('/authentication/redirect', (req, res) => {
+        const section = req.query.section || 'dashboard';
+        res.setHeader('Location', `/ghost/#/${section}`);
+        res.status(302).end();
+    });
 
     // ## Extended Settings
     router.put('/settings/override', mw.authAdminApi, http(api.settings.applySettingsOverride));
