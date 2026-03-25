@@ -29,7 +29,7 @@ function getOriginOfRequest(req) {
     };
 
     const origin = getHeader('origin');
-    const referrer = getHeader('referrer') || getHeader('referer') || urlUtils.getAdminUrl() || urlUtils.getSiteUrl();
+    const referrer = getHeader('referrer') || getHeader('referer');
 
     if (!origin && !referrer || origin === 'null') {
         return null;

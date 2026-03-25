@@ -210,11 +210,59 @@ describe('SessionService', function () {
 
         await sessionService.removeUserForSession(req, res);
         assert.equal(req.session.user_id, undefined);
-        assert.equal(req.session.verified, true);
+        assert.equal(req.session.verified, undefined);
 
         await sessionService.createSessionForUser(req, res, user);
         assert.equal(req.session.user_id, 'egg');
+        assert.equal(req.session.verified, undefined);
+    });
+
+    it('Clears verified state when switching to a different user in the same session', async function () {
+        const getSession = async (req) => {
+            if (req.session) {
+                return req.session;
+            }
+            req.session = {
+                destroy: sinon.spy(cb => cb())
+            };
+            return req.session;
+        };
+
+        const findUserById = sinon.spy(async ({id}) => ({id}));
+        const getOriginOfRequest = sinon.stub().returns('https://admin.example.com');
+        const isStaffDeviceVerificationDisabled = sinon.stub().returns(false);
+
+        const sessionService = SessionService({
+            getSession,
+            findUserById,
+            getOriginOfRequest,
+            getSettingsCache,
+            isStaffDeviceVerificationDisabled,
+            urlUtils
+        });
+
+        const req = Object.create(express.request, {
+            ip: {
+                value: '0.0.0.0'
+            },
+            headers: {
+                value: {
+                    cookie: 'thing'
+                }
+            },
+            get: {
+                value: () => 'https://admin.example.com'
+            }
+        });
+        const res = Object.create(express.response);
+
+        await sessionService.createSessionForUser(req, res, {id: 'egg'});
+        await sessionService.verifySession(req, res);
         assert.equal(req.session.verified, true);
+
+        await sessionService.createSessionForUser(req, res, {id: 'ham'});
+        assert.equal(req.session.user_id, 'ham');
+        assert.equal(req.session.verified, undefined);
     });
 
     it('#createSessionForUser verifies session when valid token is provided on request', async function () {

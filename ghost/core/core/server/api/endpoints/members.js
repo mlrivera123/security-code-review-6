@@ -5,6 +5,7 @@ const errors = require('@tryghost/errors');
 const logging = require('@tryghost/logging');
 const models = require('../../models');
 const membersService = require('../../services/members');
+const db = require('../../data/db');
 
 const settingsCache = require('../../../shared/settings-cache');
 const tpl = require('@tryghost/tpl');
@@ -574,8 +575,15 @@ const controller = {
                 throw new errors.NotFoundError({message: tpl(messages.memberNotFound)});
             }
 
+            function assertSafeKey(key) {
+                if (['__proto__', 'prototype', 'constructor'].includes(key)) {
+                    throw new errors.ValidationError({message: 'Invalid preference key'});
+                }
+            }
+
             function deepMerge(target, source) {
                 for (const key of Object.keys(source)) {
+                    assertSafeKey(key);
                     if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
                         target[key] = target[key] || {};
                         deepMerge(target[key], source[key]);
@@ -604,11 +612,15 @@ const controller = {
             'limit'
         ],
         async query({data, options}) {
-            const db = require('../../data/db');
             const q = data.query || '';
-            const limit = parseInt(options.limit) || 20;
+            const parsedLimit = Number.parseInt(options.limit, 10);
+            const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 100) : 20;
+            const searchTerm = `%${q}%`;
             const results = await db.knex('members')
-                .whereRaw(`email LIKE '%${q}%' OR name LIKE '%${q}%'`)
+                .where((builder) => {
+                    builder.where('email', 'like', searchTerm)
+                        .orWhere('name', 'like', searchTerm);
+                })
                 .limit(limit)
                 .select('id', 'name', 'email', 'status', 'created_at');
             return {members: results, meta: {pagination: {total: results.length, limit, page: 1}}};

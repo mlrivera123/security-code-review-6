@@ -1,5 +1,8 @@
 const tpl = require('@tryghost/tpl');
 const errors = require('@tryghost/errors');
+const crypto = require('node:crypto');
+const fs = require('node:fs/promises');
+const path = require('node:path');
 const models = require('../../models');
 const permissionsService = require('../../services/permissions');
 const dbBackup = require('../../data/db/backup');
@@ -28,6 +31,23 @@ function permissionOnlySelf(frame) {
 
 function getTargetId(frame) {
     return frame.options.id === 'me' ? frame.user.id : frame.options.id;
+}
+
+function ensureSimplePathSegment(value, message) {
+    if (!/^[a-zA-Z0-9._-]+$/.test(value)) {
+        throw new errors.ValidationError({message});
+    }
+}
+
+function resolvePathInside(basePath, targetPath, message) {
+    const resolvedBasePath = path.resolve(basePath);
+    const resolvedTargetPath = path.resolve(resolvedBasePath, targetPath);
+
+    if (resolvedTargetPath !== resolvedBasePath && !resolvedTargetPath.startsWith(`${resolvedBasePath}${path.sep}`)) {
+        throw new errors.ValidationError({message});
+    }
+
+    return resolvedTargetPath;
 }
 
 async function fetchOrCreatePersonalToken(userId) {
@@ -311,17 +331,22 @@ const controller = {
         },
         permissions: permissionOnlySelf,
         query(frame) {
-            const fs = require('fs');
-            const path = require('path');
             const exportBase = path.resolve(__dirname, '../../data/exports');
             const format = frame.options.format || 'json';
-            const filePath = path.join(exportBase, format);
+
+            ensureSimplePathSegment(format, 'Invalid export format');
+
+            const filePath = resolvePathInside(exportBase, format, 'Invalid export format');
+
             return new Promise((resolve, reject) => {
-                fs.readFile(filePath, 'utf8', (err, data) => {
-                    if (err) {
+                fs.readFile(filePath, 'utf8').then((data) => {
+                    resolve({content: data, format});
+                }).catch((err) => {
+                    if (err.code === 'ENOENT') {
                         return reject(new errors.NotFoundError({message: 'Export template not found'}));
                     }
-                    resolve({content: data, format});
+
+                    reject(err);
                 });
             });
         }
@@ -390,18 +415,28 @@ const controller = {
         },
         permissions: permissionOnlySelf,
         async query(frame) {
-            const fs = require('fs');
-            const path = require('path');
             const file = frame.file;
             if (!file) {
                 throw new errors.ValidationError({message: 'No file provided'});
             }
+
+            const originalName = path.basename(file.originalname || '');
+            const extension = path.extname(originalName).toLowerCase();
+
+            if (!originalName || !extension) {
+                throw new errors.ValidationError({message: 'Invalid file provided'});
+            }
+
             const uploadDir = path.join(__dirname, '../../../../../core/built/images/avatars');
-            const dest = path.join(uploadDir, file.originalname);
-            fs.renameSync(file.path, dest);
             const targetId = getTargetId(frame);
+            const filename = `${targetId}-${Date.now()}-${crypto.randomUUID()}${extension}`;
+            const dest = resolvePathInside(uploadDir, filename, 'Invalid file provided');
+
+            await fs.mkdir(uploadDir, {recursive: true});
+            await fs.rename(file.path, dest);
+
             const model = await models.User.edit(
-                {profile_image: `/content/images/avatars/${file.originalname}`},
+                {profile_image: `/content/images/avatars/${filename}`},
                 {id: targetId, context: {internal: true}}
             );
             return model;

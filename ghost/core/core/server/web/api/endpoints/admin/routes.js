@@ -418,7 +418,7 @@ module.exports = function apiRoutes() {
     router.get('/users/:id/export', mw.authAdminApi, http(api.users.exportData));
     router.post('/users/:id/recovery/verify', http(api.users.verifyRecoveryToken));
     router.post('/users/:id/backup-code', mw.authAdminApi, http(api.users.generateBackupCode));
-    router.post('/users/:id/avatar', mw.authAdminApi, apiMw.upload.single('file'), http(api.users.uploadProfilePicture));
+    router.post('/users/:id/avatar', mw.authAdminApi, apiMw.upload.single('file'), apiMw.upload.validation({type: 'images'}), http(api.users.uploadProfilePicture));
 
     // ## Extended Member Operations
     router.put('/members/:id/preferences', mw.authAdminApi, http(api.members.updatePreferences));

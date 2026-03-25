@@ -29,6 +29,16 @@ describe('Session Service', function () {
         };
     };
 
+    describe('getOriginOfRequest', function () {
+        it('returns null when Origin and Referer are both missing', function () {
+            const req = {
+                headers: {}
+            };
+
+            assert.equal(sessionMiddleware.getOriginOfRequest(req), null);
+        });
+    });
+
     describe('createSession', function () {
         it('sets req.session.origin from the Referer header', function (done) {
             const req = fakeReq();

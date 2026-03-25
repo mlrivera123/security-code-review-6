@@ -24,12 +24,22 @@ describe('Members Service Middleware', function () {
             next = sinon.stub();
 
             res.redirect = sinon.stub().returns('');
+            res.getHeader = sinon.stub().returns(undefined);
+            res.setHeader = sinon.stub();
 
             // Stub the members Service, handle this in separate tests
             oldSSR = membersService.ssr;
             membersService.ssr = {
                 exchangeTokenForSession: sinon.stub()
             };
+
+            sinon.stub(membersService, 'api').get(() => {
+                return {
+                    getTokenDataFromMagicLinkToken: sinon.stub().resolves({
+                        browserSessionToken: 'binding-token'
+                    })
+                };
+            });
 
             // Stub the members Service, handle this in separate tests
             oldProductModel = models.Product;
@@ -62,6 +72,7 @@ describe('Members Service Middleware', function () {
         it('redirects correctly on success', async function () {
             req.url = '/members?token=test&action=signup';
             req.query = {token: 'test', action: 'signup'};
+            req.headers = {cookie: 'ghost-members-ml-b=binding-token'};
 
             // Fake token handling success
             membersService.ssr.exchangeTokenForSession.resolves({
@@ -80,11 +91,13 @@ describe('Members Service Middleware', function () {
             sinon.assert.notCalled(next);
             sinon.assert.calledOnce(res.redirect);
             assert.equal(res.redirect.firstCall.args[0], '/blah/?action=signup&success=true');
+            sinon.assert.calledOnce(res.setHeader);
         });
 
         it('redirects correctly on failure', async function () {
             req.url = '/members?token=test&action=signup';
             req.query = {token: 'test', action: 'signup'};
+            req.headers = {cookie: 'ghost-members-ml-b=binding-token'};
 
             // Fake token handling failure
             membersService.ssr.exchangeTokenForSession.rejects();
@@ -101,6 +114,7 @@ describe('Members Service Middleware', function () {
         it('redirects free member to custom redirect on signup', async function () {
             req.url = '/members?token=test&action=signup';
             req.query = {token: 'test', action: 'signup'};
+            req.headers = {cookie: 'ghost-members-ml-b=binding-token'};
 
             // Fake token handling failure
             membersService.ssr.exchangeTokenForSession.resolves({});
@@ -124,6 +138,7 @@ describe('Members Service Middleware', function () {
         it('redirects paid member to custom redirect on signup', async function () {
             req.url = '/members?token=test&action=signup';
             req.query = {token: 'test', action: 'signup'};
+            req.headers = {cookie: 'ghost-members-ml-b=binding-token'};
 
             // Fake token handling failure
             membersService.ssr.exchangeTokenForSession.resolves({
@@ -147,6 +162,7 @@ describe('Members Service Middleware', function () {
         it('redirects member to referrer param path on signin if it is on the site', async function () {
             req.url = '/members?token=test&action=signin&r=https%3A%2F%2Fsite.com%2Fblah%2Fmy-post%2F';
             req.query = {token: 'test', action: 'signin', r: 'https://site.com/blah/my-post/#comment-123'};
+            req.headers = {cookie: 'ghost-members-ml-b=binding-token'};
 
             // Fake token handling failure
             membersService.ssr.exchangeTokenForSession.resolves({});
@@ -163,6 +179,7 @@ describe('Members Service Middleware', function () {
         it('redirects member to referrer param path on signup if it is on the site', async function () {
             req.url = '/members?token=test&action=signup&r=https%3A%2F%2Fsite.com%2Fblah%2Fmy-post%2F';
             req.query = {token: 'test', action: 'signup', r: 'https://site.com/blah/my-post/#comment-123'};
+            req.headers = {cookie: 'ghost-members-ml-b=binding-token'};
 
             // Fake token handling failure
             membersService.ssr.exchangeTokenForSession.resolves({});
@@ -179,6 +196,7 @@ describe('Members Service Middleware', function () {
         it('does not redirect to referrer param if it is external', async function () {
             req.url = '/members?token=test&action=signin&r=https%3A%2F%2Fexternal.com%2Fwhatever%2F';
             req.query = {token: 'test', action: 'signin', r: 'https://external.com/whatever/'};
+            req.headers = {cookie: 'ghost-members-ml-b=binding-token'};
 
             // Fake token handling failure
             membersService.ssr.exchangeTokenForSession.resolves({});
@@ -190,6 +208,31 @@ describe('Members Service Middleware', function () {
             sinon.assert.notCalled(next);
             sinon.assert.calledOnce(res.redirect);
             assert.equal(res.redirect.firstCall.args[0], '/blah/?action=signin&success=true');
+        });
+
+        it('does not redirect to a lookalike domain that shares the site URL prefix', async function () {
+            req.url = '/members?token=test&action=signin&r=https%3A%2F%2Fsite.com.evil.test%2Fwhatever%2F';
+            req.query = {token: 'test', action: 'signin', r: 'https://site.com.evil.test/whatever/'};
+            req.headers = {cookie: 'ghost-members-ml-b=binding-token'};
+
+            membersService.ssr.exchangeTokenForSession.resolves({});
+
+            await membersMiddleware.createSessionFromMagicLink(req, res, next);
+
+            sinon.assert.calledOnce(res.redirect);
+            assert.equal(res.redirect.firstCall.args[0], '/blah/?action=signin&success=true');
+        });
+
+        it('rejects magic link sign-in when the browser binding cookie is missing', async function () {
+            req.url = '/members?token=test&action=signin';
+            req.query = {token: 'test', action: 'signin'};
+            req.headers = {};
+
+            await membersMiddleware.createSessionFromMagicLink(req, res, next);
+
+            sinon.assert.notCalled(membersService.ssr.exchangeTokenForSession);
+            sinon.assert.calledOnce(res.redirect);
+            assert.equal(res.redirect.firstCall.args[0], '/blah/?action=signin&success=false');
         });
     });
 

@@ -23,6 +23,39 @@ const messages = {
     invalidKey: 'Invalid key.'
 };
 
+const MAGIC_LINK_BROWSER_COOKIE_NAME = 'ghost-members-ml-b';
+
+function getCookieValue(req, cookieName) {
+    const cookieHeader = req.headers?.cookie;
+
+    if (!cookieHeader) {
+        return null;
+    }
+
+    for (const cookie of cookieHeader.split(';')) {
+        const [name, ...valueParts] = cookie.trim().split('=');
+        if (name === cookieName) {
+            return decodeURIComponent(valueParts.join('='));
+        }
+    }
+
+    return null;
+}
+
+function appendSetCookieHeader(res, cookieValue) {
+    if (typeof res.getHeader !== 'function' || typeof res.setHeader !== 'function') {
+        return;
+    }
+
+    const existingHeader = res.getHeader('Set-Cookie');
+    const cookies = Array.isArray(existingHeader) ? existingHeader : existingHeader ? [existingHeader] : [];
+    res.setHeader('Set-Cookie', cookies.concat(cookieValue));
+}
+
+function clearMagicLinkBrowserCookie(res) {
+    appendSetCookieHeader(res, `${MAGIC_LINK_BROWSER_COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax`);
+}
+
 const getFreeTier = async function getFreeTier() {
     const response = await tiersService.api.browse();
     const freeTier = response.data.find(tier => tier.type === 'free');
@@ -350,7 +383,19 @@ const createSessionFromMagicLink = async function createSessionFromMagicLink(req
     });
 
     try {
+        const token = Array.isArray(req.query.token) ? req.query.token[0] : req.query.token;
+        const otcVerification = Array.isArray(req.query.otc_verification) ? req.query.otc_verification[0] : req.query.otc_verification;
+        const tokenData = await membersService.api.getTokenDataFromMagicLinkToken(token, otcVerification);
+        const browserSessionToken = getCookieValue(req, MAGIC_LINK_BROWSER_COOKIE_NAME);
+
+        if (tokenData?.browserSessionToken && browserSessionToken !== tokenData.browserSessionToken) {
+            throw new errors.UnauthorizedError({
+                message: 'Invalid magic link session'
+            });
+        }
+
         const member = await membersService.ssr.exchangeTokenForSession(req, res);
+        clearMagicLinkBrowserCookie(res);
         spamPrevention.membersAuth().reset(req.ip, `${member.email}login`);
         // Note: don't reset 'member_login', or that would give an easy way around user enumeration by logging in to a manually created account
         const subscriptions = member && member.subscriptions || [];
@@ -404,28 +449,37 @@ const createSessionFromMagicLink = async function createSessionFromMagicLink(req
 
         // If a custom referrer/redirect was passed, redirect the user to that URL
         const referrer = req.query.r;
-        const siteUrl = urlUtils.getSiteUrl();
 
-        if (referrer && referrer.startsWith(siteUrl)) {
-            const redirectUrl = new URL(referrer);
+        if (referrer) {
+            let redirectUrl;
 
-            // Copy search params
-            searchParams.forEach((value, key) => {
-                redirectUrl.searchParams.set(key, value);
-            });
-            redirectUrl.searchParams.set('success', 'true');
-
-            if (action === 'signin') {
-                // Not sure if we can delete this, this is a legacy param
-                redirectUrl.searchParams.set('action', 'signin');
+            try {
+                redirectUrl = new URL(referrer);
+            } catch {
+                redirectUrl = null;
             }
-            return res.redirect(redirectUrl.href);
+
+            if (redirectUrl && urlUtils.isSiteUrl(redirectUrl)) {
+
+                // Copy search params
+                searchParams.forEach((value, key) => {
+                    redirectUrl.searchParams.set(key, value);
+                });
+                redirectUrl.searchParams.set('success', 'true');
+
+                if (action === 'signin') {
+                    // Not sure if we can delete this, this is a legacy param
+                    redirectUrl.searchParams.set('action', 'signin');
+                }
+                return res.redirect(redirectUrl.href);
+            }
         }
 
         // Do a standard 302 redirect to the homepage, with success=true
         searchParams.set('success', 'true');
         res.redirect(`${urlUtils.getSubdir()}/?${searchParams.toString()}`);
     } catch (err) {
+        clearMagicLinkBrowserCookie(res);
         logging.warn(err.message);
 
         // Do a standard 302 redirect to the homepage, with success=false

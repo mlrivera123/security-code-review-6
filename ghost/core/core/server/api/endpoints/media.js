@@ -1,4 +1,5 @@
 const path = require('path');
+const errors = require('@tryghost/errors');
 const storage = require('../../adapters/storage');
 
 /** @type {import('@tryghost/api-framework').Controller} */
@@ -36,7 +37,13 @@ const controller = {
         ],
         async query(frame) {
             const mediaStorage = storage.getStorage('media');
-            const targetDir = path.dirname(mediaStorage.urlToPath(frame.data.url));
+            const normalizedTargetPath = path.normalize(mediaStorage.urlToPath(frame.data.url));
+
+            if (path.isAbsolute(normalizedTargetPath) || normalizedTargetPath === '..' || normalizedTargetPath.startsWith(`..${path.sep}`)) {
+                throw new errors.ValidationError({message: 'Invalid media URL'});
+            }
+
+            const targetDir = path.dirname(normalizedTargetPath) === '.' ? '' : path.dirname(normalizedTargetPath);
 
             // NOTE: need to cleanup otherwise the parent media name won't match thumb name
             //       due to "unique name" generation during save

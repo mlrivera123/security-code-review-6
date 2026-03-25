@@ -81,4 +81,80 @@ describe('Members controller', function () {
             }));
         });
     });
+
+    describe('searchMembers', function () {
+        it('uses parameterized query builders for search terms', async function () {
+            const results = [{id: '1', email: 'test@example.com'}];
+            const chain = {
+                where: sinon.stub().returnsThis(),
+                limit: sinon.stub().returnsThis(),
+                select: sinon.stub().resolves(results)
+            };
+            const whereBuilder = {
+                where: sinon.stub().returnsThis(),
+                orWhere: sinon.stub().returnsThis()
+            };
+            const db = {
+                knex: sinon.stub().returns(chain)
+            };
+
+            membersController.__set__('db', db);
+
+            const response = await membersController.searchMembers.query({
+                data: {query: "%' OR 1=1 --"},
+                options: {limit: '500'}
+            });
+
+            sinon.assert.calledOnceWithExactly(db.knex, 'members');
+            sinon.assert.calledOnce(chain.where);
+            chain.where.firstCall.args[0](whereBuilder);
+            sinon.assert.calledOnceWithExactly(whereBuilder.where, 'email', 'like', "%%' OR 1=1 --%");
+            sinon.assert.calledOnceWithExactly(whereBuilder.orWhere, 'name', 'like', "%%' OR 1=1 --%");
+            sinon.assert.calledOnceWithExactly(chain.limit, 100);
+            assert.deepEqual(response, {
+                members: results,
+                meta: {
+                    pagination: {
+                        total: 1,
+                        limit: 100,
+                        page: 1
+                    }
+                }
+            });
+        });
+    });
+
+    describe('updatePreferences', function () {
+        it('rejects prototype pollution keys', async function () {
+            const member = {
+                toJSON: sinon.stub().returns({preferences: {newsletter_settings: {}}})
+            };
+            const memberBREADService = {
+                read: sinon.stub().resolves(member),
+                edit: sinon.stub().resolves()
+            };
+
+            membersController.__set__('membersService', {
+                api: {
+                    memberBREADService
+                }
+            });
+
+            await assert.rejects(
+                membersController.updatePreferences.query({
+                    data: {
+                        id: 'member-1',
+                        preferences: JSON.parse('{"__proto__":{"polluted":true}}')
+                    }
+                }),
+                (err) => {
+                    assert.equal(err.errorType, 'ValidationError');
+                    assert.equal(err.message, 'Invalid preference key');
+                    return true;
+                }
+            );
+
+            sinon.assert.notCalled(memberBREADService.edit);
+        });
+    });
 });

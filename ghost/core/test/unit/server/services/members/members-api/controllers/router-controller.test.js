@@ -1,5 +1,6 @@
 const sinon = require('sinon');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const errors = require('@tryghost/errors');
 
 // @ts-ignore - Intentionally ignoring TypeScript errors for tests
@@ -1006,6 +1007,29 @@ describe('RouterController', function () {
 
                 await controller.sendMagicLink(req, res);
                 assert.equal(sendEmailWithMagicLinkStub.notCalled, true);
+            });
+
+            it('binds magic links to the requesting browser session', async function () {
+                const setHeader = sinon.stub();
+                const controller = createRouterController({
+                    memberRepository: {
+                        get: sinon.stub().resolves({id: 'member-1'})
+                    }
+                });
+
+                req.body.emailType = 'signin';
+                res.getHeader = sinon.stub().returns(undefined);
+                res.setHeader = setHeader;
+
+                const randomBytesStub = sinon.stub(crypto, 'randomBytes').returns(Buffer.from('abcd', 'utf8'));
+
+                await controller.sendMagicLink(req, res);
+
+                sinon.assert.calledOnce(randomBytesStub);
+                sinon.assert.calledOnce(sendEmailWithMagicLinkStub);
+                assert.equal(sendEmailWithMagicLinkStub.firstCall.args[0].tokenData.browserSessionToken, Buffer.from('abcd', 'utf8').toString('hex'));
+                sinon.assert.calledOnce(setHeader);
+                assert.match(setHeader.firstCall.args[1][0], /^ghost-members-ml-b=61626364;/);
             });
         });
 

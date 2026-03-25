@@ -36,6 +36,26 @@ const messages = {
     failedToVerifyCode: 'Failed to verify code, please try again.'
 };
 
+const MAGIC_LINK_BROWSER_COOKIE_NAME = 'ghost-members-ml-b';
+const MAGIC_LINK_BROWSER_COOKIE_MAX_AGE_SECONDS = 15 * 60;
+
+function appendSetCookieHeader(res, cookieValue) {
+    if (typeof res.getHeader !== 'function' || typeof res.setHeader !== 'function') {
+        return;
+    }
+
+    const existingHeader = res.getHeader('Set-Cookie');
+    const cookies = Array.isArray(existingHeader) ? existingHeader : existingHeader ? [existingHeader] : [];
+    res.setHeader('Set-Cookie', cookies.concat(cookieValue));
+}
+
+function setMagicLinkBrowserCookie(res, value) {
+    appendSetCookieHeader(
+        res,
+        `${MAGIC_LINK_BROWSER_COOKIE_NAME}=${value}; Max-Age=${MAGIC_LINK_BROWSER_COOKIE_MAX_AGE_SECONDS}; Path=/; HttpOnly; SameSite=Lax`
+    );
+}
+
 // helper utility for logic shared between sendMagicLink and verifyOTC
 function extractRefererOrRedirect(req) {
     const {autoRedirect, redirect} = req.body;
@@ -741,9 +761,9 @@ module.exports = class RouterController {
             const resBody = {};
 
             if (emailType === 'signup' || emailType === 'subscribe') {
-                await this._handleSignup(req, normalizedEmail, referrer);
+                await this._handleSignup(req, res, normalizedEmail, referrer);
             } else {
-                const signIn = await this._handleSignin(req, normalizedEmail, referrer);
+                const signIn = await this._handleSignin(req, res, normalizedEmail, referrer);
                 if (signIn.otcRef) {
                     resBody.otc_ref = signIn.otcRef;
                 }
@@ -841,7 +861,7 @@ module.exports = class RouterController {
         return `${timestamp}:${hash}`;
     }
 
-    async _handleSignup(req, normalizedEmail, referrer = null) {
+    async _handleSignup(req, res, normalizedEmail, referrer = null) {
         if (!this._allowSelfSignup()) {
             if (this._settingsCache.get('members_signup_access') === 'paid') {
                 throw new errors.BadRequestError({
@@ -863,19 +883,23 @@ module.exports = class RouterController {
         }
 
         const {emailType} = req.body;
+        const browserSessionToken = crypto.randomBytes(32).toString('hex');
+
+        setMagicLinkBrowserCookie(res, browserSessionToken);
 
         const tokenData = {
             labels: req.body.labels,
             name: req.body.name,
             reqIp: req.ip ?? undefined,
             newsletters: await this._validateNewsletters(req.body?.newsletters ?? []),
-            attribution: await this._memberAttributionService.getAttribution(req.body.urlHistory)
+            attribution: await this._memberAttributionService.getAttribution(req.body.urlHistory),
+            browserSessionToken
         };
 
         return await this._sendEmailWithMagicLink({email: normalizedEmail, tokenData, requestedType: emailType, referrer});
     }
 
-    async _handleSignin(req, normalizedEmail, referrer = null) {
+    async _handleSignin(req, res, normalizedEmail, referrer = null) {
         const {emailType, includeOTC: reqIncludeOTC} = req.body;
 
         let includeOTC = false;
@@ -892,7 +916,13 @@ module.exports = class RouterController {
             return includeOTC ? {otcRef: crypto.randomUUID()} : {};
         }
 
-        const tokenData = {};
+        const browserSessionToken = crypto.randomBytes(32).toString('hex');
+
+        setMagicLinkBrowserCookie(res, browserSessionToken);
+
+        const tokenData = {
+            browserSessionToken
+        };
         return await this._sendEmailWithMagicLink({email: normalizedEmail, tokenData, requestedType: emailType, referrer, includeOTC});
     }
 

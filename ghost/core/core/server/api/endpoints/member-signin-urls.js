@@ -3,7 +3,8 @@ const errors = require('@tryghost/errors');
 const membersService = require('../../services/members');
 
 const messages = {
-    memberNotFound: 'Member not found.'
+    memberNotFound: 'Member not found.',
+    noPermissionToGenerate: 'You do not have permission to generate member sign-in URLs.'
 };
 
 /** @type {import('@tryghost/api-framework').Controller} */
@@ -19,6 +20,10 @@ const controller = {
         ],
         permissions: true,
         async query(frame) {
+            if (!frame.user || typeof frame.user.hasRole !== 'function' || !frame.user.hasRole('Owner')) {
+                throw new errors.NoPermissionError({message: tpl(messages.noPermissionToGenerate)});
+            }
+
             let model = await membersService.api.members.get(frame.data, frame.options);
 
             if (!model) {

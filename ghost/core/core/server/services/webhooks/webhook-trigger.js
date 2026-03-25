@@ -16,7 +16,7 @@ class WebhookTrigger {
         this.models = models;
         this.payload = payload;
 
-        this.request = request ?? require('@tryghost/request');
+        this.request = request ?? require('../../lib/request-external');
         this.limitService = limitService;
     }
 

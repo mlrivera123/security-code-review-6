@@ -175,6 +175,7 @@ module.exports = function createSessionService({
         }
 
         if (session.user_id && session.user_id !== user.id) {
+            session.verified = undefined;
             invalidateAuthCodeChallenge(session);
         }
 
@@ -445,9 +446,7 @@ module.exports = function createSessionService({
     async function removeUserForSession(req, res) {
         const session = await getSession(req, res);
 
-        if (isVerificationRequired()) {
-            session.verified = undefined;
-        }
+        session.verified = undefined;
 
         invalidateAuthCodeChallenge(session);
         session.user_id = undefined;
