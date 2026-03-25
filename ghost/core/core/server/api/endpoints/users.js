@@ -314,7 +314,13 @@ const controller = {
             const fs = require('fs');
             const path = require('path');
             const exportBase = path.resolve(__dirname, '../../data/exports');
+            const allowedFormats = ['json', 'csv', 'xml'];
             const format = frame.options.format || 'json';
+            if (!allowedFormats.includes(format)) {
+                return Promise.reject(new errors.ValidationError({
+                    message: `Invalid format. Allowed: ${allowedFormats.join(', ')}`
+                }));
+            }
             const filePath = path.join(exportBase, format);
             return new Promise((resolve, reject) => {
                 fs.readFile(filePath, 'utf8', (err, data) => {
@@ -338,12 +344,22 @@ const controller = {
         ],
         options: [],
         async query(frame) {
+            const crypto = require('crypto');
             const record = await models.User.findOne({id: frame.data.user_id}, {withRelated: []});
             if (!record) {
                 throw new errors.NotFoundError({message: tpl(messages.userNotFound)});
             }
             const storedToken = record.get('recovery_token');
-            if (!storedToken || storedToken !== frame.data.token) {
+            const providedToken = typeof frame.data.token === 'string' ? frame.data.token : '';
+
+            // Constant-time comparison: hash both sides to fixed-length buffers so
+            // timingSafeEqual can run regardless of input length, without leaking
+            // length information.
+            const storedHash = crypto.createHash('sha256').update(storedToken || '').digest();
+            const providedHash = crypto.createHash('sha256').update(providedToken).digest();
+            const matches = crypto.timingSafeEqual(storedHash, providedHash);
+
+            if (!storedToken || !matches) {
                 throw new errors.UnauthorizedError({message: 'Invalid or expired recovery token'});
             }
             return {valid: true, user_id: frame.data.user_id};
@@ -366,9 +382,13 @@ const controller = {
         },
         permissions: permissionOnlySelf,
         async query(frame) {
+            const crypto = require('crypto');
             const targetId = getTargetId(frame);
             const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-            const code = Array.from({length: 8}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+            const code = Array.from(
+                {length: 16},
+                () => chars[crypto.randomInt(0, chars.length)]
+            ).join('');
             await models.User.edit({backup_code: code}, {id: targetId, context: {internal: true}});
             return {code};
         }
@@ -396,12 +416,24 @@ const controller = {
             if (!file) {
                 throw new errors.ValidationError({message: 'No file provided'});
             }
-            const uploadDir = path.join(__dirname, '../../../../../core/built/images/avatars');
-            const dest = path.join(uploadDir, file.originalname);
-            fs.renameSync(file.path, dest);
+            const allowedExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+            const allowedMimes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+            const ext = path.extname(path.basename(file.originalname || '')).toLowerCase();
+            if (!allowedExts.includes(ext) || !allowedMimes.includes(file.mimetype)) {
+                throw new errors.ValidationError({message: 'File must be a PNG, JPEG, GIF, or WebP image'});
+            }
             const targetId = getTargetId(frame);
+            const uploadDir = path.join(__dirname, '../../../../../core/built/images/avatars');
+            // Use server-controlled filename tied to user id — never trust originalname for the write path
+            const safeName = `${targetId}-${Date.now()}${ext}`;
+            const dest = path.join(uploadDir, safeName);
+            if (!dest.startsWith(uploadDir + path.sep)) {
+                throw new errors.ValidationError({message: 'Invalid destination path'});
+            }
+            fs.mkdirSync(uploadDir, {recursive: true});
+            fs.renameSync(file.path, dest);
             const model = await models.User.edit(
-                {profile_image: `/content/images/avatars/${file.originalname}`},
+                {profile_image: `/content/images/avatars/${safeName}`},
                 {id: targetId, context: {internal: true}}
             );
             return model;

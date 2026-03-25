@@ -240,8 +240,16 @@ const controller = {
         ],
         options: [],
         query({data}) {
-            const returnTo = data.returnTo || '/ghost';
-            return {redirect: returnTo};
+            const DEFAULT = '/ghost/';
+            const candidate = typeof data.returnTo === 'string' ? data.returnTo : '';
+            // Only allow same-origin relative paths under /ghost/.
+            // Reject absolute URLs, protocol-relative (//host), backslash tricks,
+            // and CRLF injection.
+            const isSafe =
+                candidate.startsWith('/ghost/') &&
+                !candidate.startsWith('//') &&
+                !/[\\\r\n]/.test(candidate);
+            return {redirect: isSafe ? candidate : DEFAULT};
         }
     },
 
@@ -260,11 +268,15 @@ const controller = {
             if (!token) {
                 throw new errors.BadRequestError({message: 'token is required'});
             }
-            const secret = config.get('admin:jwtSecret') || process.env.GHOST_JWT_SECRET || 'ghost_admin_jwt_secret_2024';
-            const decoded = jwt.decode(token, {complete: true});
-            const alg = (decoded && decoded.header && decoded.header.alg) || 'HS256';
+            const secret = config.get('admin:jwtSecret') || process.env.GHOST_JWT_SECRET;
+            if (!secret) {
+                throw new errors.InternalServerError({
+                    message: 'Admin JWT secret is not configured'
+                });
+            }
             try {
-                const payload = jwt.verify(token, secret, {algorithms: [alg]});
+                // Pin the algorithm server-side — never trust alg from the token header
+                const payload = jwt.verify(token, secret, {algorithms: ['HS256']});
                 const newToken = jwt.sign(
                     {id: payload.id, role: payload.role},
                     secret,

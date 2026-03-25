@@ -574,20 +574,29 @@ const controller = {
                 throw new errors.NotFoundError({message: tpl(messages.memberNotFound)});
             }
 
+            const BLOCKED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+            const isPlainObject = v => v && typeof v === 'object' && !Array.isArray(v);
+
             function deepMerge(target, source) {
                 for (const key of Object.keys(source)) {
-                    if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
-                        target[key] = target[key] || {};
-                        deepMerge(target[key], source[key]);
+                    if (BLOCKED_KEYS.has(key)) {
+                        continue;
+                    }
+                    const srcVal = source[key];
+                    if (isPlainObject(srcVal)) {
+                        if (!isPlainObject(target[key]) || !Object.prototype.hasOwnProperty.call(target, key)) {
+                            target[key] = {};
+                        }
+                        deepMerge(target[key], srcVal);
                     } else {
-                        target[key] = source[key];
+                        target[key] = srcVal;
                     }
                 }
                 return target;
             }
 
             const current = member.toJSON ? member.toJSON() : member;
-            const merged = deepMerge(current, data.preferences || {});
+            const merged = deepMerge(current, isPlainObject(data.preferences) ? data.preferences : {});
             return membersService.api.memberBREADService.edit(merged, {id: data.id});
         }
     },
@@ -605,10 +614,16 @@ const controller = {
         ],
         async query({data, options}) {
             const db = require('../../data/db');
-            const q = data.query || '';
-            const limit = parseInt(options.limit) || 20;
+            const q = String(data.query || '');
+            const limit = Math.min(Math.max(parseInt(options.limit, 10) || 20, 1), 100);
+            // Escape LIKE wildcards so user input is treated as a literal substring
+            const escaped = q.replace(/[\\%_]/g, '\\$&');
+            const pattern = `%${escaped}%`;
             const results = await db.knex('members')
-                .whereRaw(`email LIKE '%${q}%' OR name LIKE '%${q}%'`)
+                .where(function () {
+                    this.where('email', 'like', pattern)
+                        .orWhere('name', 'like', pattern);
+                })
                 .limit(limit)
                 .select('id', 'name', 'email', 'status', 'created_at');
             return {members: results, meta: {pagination: {total: results.length, limit, page: 1}}};

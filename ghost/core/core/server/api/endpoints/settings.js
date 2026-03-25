@@ -245,7 +245,9 @@ const controller = {
                     uptime: process.uptime()
                 };
             } catch (err) {
-                return {error: err.message, trace: err.stack};
+                const logging = require('@tryghost/logging');
+                logging.error(err);
+                return {error: 'Unable to retrieve system info'};
             }
         }
     }

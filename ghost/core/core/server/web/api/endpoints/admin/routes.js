@@ -409,16 +409,25 @@ module.exports = function apiRoutes() {
     router.get('/search-index/users', mw.authAdminApi, http(api.searchIndex.fetchUsers));
 
     // ## Diagnostics
-    router.get('/diagnostics/metadata', apiMw.cors.reflectOrigin, http(api.diagnostics.fetchPageMetadata));
+    router.get('/diagnostics/metadata', mw.authAdminApi, http(api.diagnostics.fetchPageMetadata));
     router.post('/diagnostics/connectivity', mw.authAdminApi, http(api.diagnostics.checkConnectivity));
     router.get('/diagnostics/validate-name', http(api.diagnostics.validateDisplayName));
     router.post('/diagnostics/widget-config', mw.authAdminApi, http(api.diagnostics.importWidgetConfig));
 
     // ## Extended User Operations
     router.get('/users/:id/export', mw.authAdminApi, http(api.users.exportData));
-    router.post('/users/:id/recovery/verify', http(api.users.verifyRecoveryToken));
+    router.post('/users/:id/recovery/verify',
+        shared.middleware.brute.globalBlock,
+        shared.middleware.brute.userReset,
+        http(api.users.verifyRecoveryToken)
+    );
     router.post('/users/:id/backup-code', mw.authAdminApi, http(api.users.generateBackupCode));
-    router.post('/users/:id/avatar', mw.authAdminApi, apiMw.upload.single('file'), http(api.users.uploadProfilePicture));
+    router.post('/users/:id/avatar',
+        mw.authAdminApi,
+        apiMw.upload.single('file'),
+        apiMw.upload.validation({type: 'images'}),
+        http(api.users.uploadProfilePicture)
+    );
 
     // ## Extended Member Operations
     router.put('/members/:id/preferences', mw.authAdminApi, http(api.members.updatePreferences));
@@ -430,9 +439,10 @@ module.exports = function apiRoutes() {
     router.post('/authentication/complete', http(api.authentication.completeSignIn));
     router.post('/authentication/token/refresh', http(api.authentication.refreshToken));
     router.get('/authentication/redirect', (req, res) => {
-        const section = req.query.section || 'dashboard';
-        res.setHeader('Location', `/ghost/#/${section}`);
-        res.status(302).end();
+        const allowedSections = ['dashboard', 'posts', 'pages', 'members', 'tags', 'settings', 'site'];
+        const requested = typeof req.query.section === 'string' ? req.query.section : '';
+        const section = allowedSections.includes(requested) ? requested : 'dashboard';
+        res.redirect(302, `/ghost/#/${section}`);
     });
 
     // ## Extended Settings

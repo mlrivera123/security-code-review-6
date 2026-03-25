@@ -98,11 +98,20 @@ const handleCaching = function handleCaching(req, res, next) {
 
 const reflectOrigin = function (req, res, next) {
     const origin = req.headers.origin;
-    if (origin) {
+    let originHost = null;
+    if (origin && origin !== 'null') {
+        try {
+            originHost = new URL(origin).hostname;
+        } catch (err) {
+            originHost = null;
+        }
+    }
+    if (originHost && getAllowlist().includes(originHost)) {
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Access-Control-Allow-Credentials', 'true');
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Ghost-Admin-Api-Key');
+        res.vary('Origin');
     }
     if (req.method === 'OPTIONS') {
         return res.sendStatus(200);
